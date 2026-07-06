@@ -121,3 +121,9 @@ def register_oot_ops(whitelist: Optional[List[str]] = None) -> None:
         if current_platform.device_type == "ptpu":
             from vllm_fl.dispatch.backends.vendor.sunrise.patch import apply_sunrise_patches
             apply_sunrise_patches()
+
+        # Apply Kunlunxin monkey-patches if running on Kunlunxin hardware.
+        from vllm_fl.dispatch.config.utils import get_platform_name
+        if get_platform_name() == "kunlunxin":
+            from vllm_fl.dispatch.backends.vendor.kunlunxin.patch import apply_kunlunxin_patches
+            apply_kunlunxin_patches()

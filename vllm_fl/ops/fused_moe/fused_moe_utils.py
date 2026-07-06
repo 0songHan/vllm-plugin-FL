@@ -71,6 +71,12 @@ def _get_priority_backends(moe_config: FusedMoEConfig) -> list[UnquantizedMoeBac
         _AVAILABLE_BACKENDS = [UnquantizedMoeBackend.XPU]
     elif current_platform.is_cpu():
         _AVAILABLE_BACKENDS = [UnquantizedMoeBackend.CPU]
+    else:
+        # Out-of-tree platforms (e.g. Kunlunxin): fallback to TRITON
+        _AVAILABLE_BACKENDS = [
+            UnquantizedMoeBackend.TRITON,
+            UnquantizedMoeBackend.BATCHED_TRITON,
+        ]
     return _AVAILABLE_BACKENDS
 
 ## Adopt from select_unquantized_moe_backend
@@ -88,7 +94,7 @@ def select_unquantized_moe_backend_oot(moe_config: FusedMoEConfig,
     if current_platform.is_tpu():
         return UnquantizedMoeBackend.TPU, None
 
-    if current_platform.is_out_of_tree() and use_flaggems():
+    if current_platform.is_out_of_tree():
         return UnquantizedMoeBackend.TRITON, TritonExpertsFL
 
     if moe_config.is_lora_enabled:
@@ -287,11 +293,11 @@ class TritonExpertsFL(TritonExperts):
         expert_tokens_meta: mk.ExpertTokensMetadata | None,
         apply_router_weight_on_input: bool,
     ):
-        # Fast path (no LoRA, NVIDIA only): single fused FlagGems call.
-        if self._lora_context is None and current_platform.is_cuda():
-            import flag_gems
+        # Fast path (no LoRA): single fused call via patched fused_experts_impl.
+        if self._lora_context is None:
+            from vllm_fl.ops.fused_moe.fused_moe import fused_experts_impl as _fused_experts_impl
 
-            output.copy_(flag_gems.fused_experts_impl(
+            output.copy_(_fused_experts_impl(
                 hidden_states,
                 w1,
                 w2,
