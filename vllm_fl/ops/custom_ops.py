@@ -125,5 +125,7 @@ def register_oot_ops(whitelist: Optional[List[str]] = None) -> None:
         # Apply Kunlunxin monkey-patches if running on Kunlunxin hardware.
         from vllm_fl.dispatch.config.utils import get_platform_name
         if get_platform_name() == "kunlunxin":
+            from vllm_fl.dispatch.backends.vendor.kunlunxin.patches.patch_fla_utils import (ensure_fla_compat,)
+            ensure_fla_compat()
             from vllm_fl.dispatch.backends.vendor.kunlunxin.patch import apply_kunlunxin_patches
             apply_kunlunxin_patches()
