@@ -221,11 +221,7 @@ _load_op_config_from_env()
 class DeviceInfo:
     def __init__(self):
         self.device = DeviceDetector()
-<<<<<<< HEAD
-        self.supported_device = ["nvidia", "ascend", "metax", "mthreads", "sunrise", "thead", "kunlunxin"]
-=======
-        self.supported_device = ["nvidia", "ascend", "metax", "mthreads", "sunrise", "thead", "gcu"]
->>>>>>> main
+        self.supported_device = ["nvidia", "ascend", "metax", "mthreads", "sunrise", "thead", "gcu", "kunlunxin"]
         backend.set_torch_backend_device_fn(self.device.vendor_name)
 
     @property
