@@ -95,6 +95,15 @@ def _patch_custom_ops():
 
 def register():
     """Register the FL platform."""
+    # Prevent torch.xpu.get_device_name crash in FLA utils before any model import
+    try:
+        from vllm_fl.dispatch.config.utils import get_platform_name
+        if get_platform_name() == "kunlunxin":
+            from vllm_fl.dispatch.backends.vendor.kunlunxin.patches.patch_fla_utils import ensure_fla_compat
+            ensure_fla_compat()
+    except Exception:
+        pass
+
     _patch_custom_ops()
     _patch_flash_attn_import()
     _patch_transformers_compat()
@@ -138,8 +147,6 @@ def register_router():
 
 def register_model():
     """Register FL-specific models not yet upstream."""
-    from vllm import ModelRegistry
-
     _register_flagcx_connector()
 
     # Register OOT quant kernels so kernel selection can find them
@@ -156,22 +163,3 @@ def register_model():
         #glm5_model()
     except Exception as e:
         logger.error(f"Register GlmMoeDsa model error: {str(e)}")
-
-    # Register DeepseekV4 model
-    try:
-        ModelRegistry.register_model(
-            "DeepseekV4ForCausalLM",
-            "vllm_fl.models.deepseek_v4:DeepseekV4ForCausalLM"
-        )
-    except Exception as e:
-        logger.error(f"Register DeepseekV4 model error: {str(e)}")
-
-    
-    # Register DeepseekV4 model
-    try:
-        ModelRegistry.register_model(
-            "DeepSeekV4MTPModel",
-            "vllm_fl.models.deepseek_v4_mtp:DeepSeekV4MTP"
-        )
-    except Exception as e:
-        logger.error(f"Register DeepseekV4 model error: {str(e)}")
