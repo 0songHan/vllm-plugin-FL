@@ -29,3 +29,27 @@ from . import gdn_linear_attn  # noqa: F401 — register MacaGatedDeltaNetAttent
 # TODO: remove when MetaX Triton support is available.
 import vllm.utils.import_utils as iu
 iu.has_triton_kernels = lambda: False
+
+# --------------------------------------------------
+# When vllm is built with VLLM_TARGET_DEVICE=empty, the C extension modules
+# are not compiled.  torch.ops._C_cache_ops.* are not registered, so the
+# MetaX flash attention backend's reshape_and_cache_flash call path fails.
+#
+# vllm ships a pure-Triton implementation (triton_reshape_and_cache_flash)
+# for platforms lacking the compiled extension.  Route _custom_ops through
+# the Triton fallback when the C ops are missing.
+#
+# Safe for standard vllm wheels: the patch only fires when _C_cache_ops is
+# absent, and every op in the dispatch chain is covered by the Triton kernel.
+import torch
+
+if not hasattr(torch.ops, "_C_cache_ops"):
+    import vllm._custom_ops as _custom_ops
+    from vllm.v1.attention.ops.triton_reshape_and_cache_flash import (
+        triton_reshape_and_cache_flash,
+        triton_reshape_and_cache_flash_per_token_head_quant,
+    )
+    _custom_ops.reshape_and_cache_flash = triton_reshape_and_cache_flash
+    _custom_ops.reshape_and_cache_flash_per_token_head_quant = (
+        triton_reshape_and_cache_flash_per_token_head_quant
+    )
