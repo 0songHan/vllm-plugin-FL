@@ -143,11 +143,10 @@ def register_router():
     from vllm_fl.ops.fused_moe.router import replace_router_with_fl
     replace_router_with_fl()
 
-
-
 def register_model():
     """Register FL-specific models not yet upstream."""
     from vllm import ModelRegistry
+
     _register_flagcx_connector()
 
     # Register OOT quant kernels so kernel selection can find them
@@ -164,7 +163,6 @@ def register_model():
         #glm5_model()
     except Exception as e:
         logger.error(f"Register GlmMoeDsa model error: {str(e)}")
-
 
     # Register DeepseekV4 model
     try:
