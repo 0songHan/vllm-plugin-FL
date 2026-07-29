@@ -11,18 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Quantization compatibility and out-of-tree kernel registration."""
+"""Fixed kernel entry points used by the WNA16 quantization adapters.
 
-from .compressed_tensors import (
-    CompatibilityReport,
-    WNA16Scheme,
-    inspect_vllm_compressed_tensors_api,
-    validate_compressed_tensors_wna16_config,
-)
+Implementations live in this package and are called directly. They are not
+registered with vllm-fl's general operator dispatch.
+"""
+
+from .gemm import is_wna16_gemm_available, wna16_gemm
+from .moe import is_wna16_moe_available, wna16_moe
 
 __all__ = [
-    "CompatibilityReport",
-    "WNA16Scheme",
-    "inspect_vllm_compressed_tensors_api",
-    "validate_compressed_tensors_wna16_config",
+    "is_wna16_gemm_available",
+    "is_wna16_moe_available",
+    "wna16_gemm",
+    "wna16_moe",
 ]
