@@ -327,17 +327,20 @@ class WorkerFL(WorkerBase):
     def init_device(self):
         # This env var set by Ray causes exceptions with graph building.
         if (
-            self.parallel_config.data_parallel_size > 1
-            and self.parallel_config.data_parallel_size_local > 0
-            and self.parallel_config.distributed_executor_backend
+            self.parallel_config.distributed_executor_backend
             not in ["ray", "external_launcher"]
             and self.vllm_config.parallel_config.data_parallel_backend != "ray"
             and self.vllm_config.parallel_config.nnodes_within_dp == 1
         ):
-            # Use local DP rank if available, otherwise use global DP rank.
+            # vLLM keeps the original DP rank in data_parallel_index when a
+            # non-MoE DP replica is reconfigured as an independent engine.
             dp_local_rank = self.parallel_config.data_parallel_rank_local
             if dp_local_rank is None:
-                dp_local_rank = self.parallel_config.data_parallel_rank
+                dp_local_rank = getattr(
+                    self.parallel_config,
+                    "data_parallel_index",
+                    self.parallel_config.data_parallel_rank,
+                )
 
             tp_pp_world_size = (
                 self.parallel_config.pipeline_parallel_size
