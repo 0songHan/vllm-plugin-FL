@@ -16,6 +16,7 @@ import torch
 import torch.distributed
 import torch.nn as nn
 
+from vllm import envs
 from vllm.config import CUDAGraphMode, VllmConfig, set_current_vllm_config
 from vllm.config.compilation import CompilationMode
 from vllm.distributed import (
@@ -487,8 +488,41 @@ class WorkerFL(WorkerBase):
         ) as profile_result:
             self.model_runner.profile_run()
 
+            # Keep the regular forward-pass peak separate from CUDA graph
+            # profiling so that graph memory is not double-counted below.
+            profile_torch_peak = current_platform.torch_device_fn.memory_stats().get(
+                "allocated_bytes.all.peak", 0
+            )
+
+            # CUDA graphs are captured only after the KV cache has been
+            # allocated. Account for their pool before sizing the cache;
+            # otherwise high-concurrency batches can leave no room for
+            # runtime activations and fail with OOM.
+            cudagraph_memory_estimate = 0
+            if (
+                current_platform.is_cuda()
+                and self.vllm_config.compilation_config.cudagraph_mode
+                != CUDAGraphMode.NONE
+            ):
+                cudagraph_memory_estimate = self.model_runner.profile_cudagraph_memory()
+
+        profile_result.torch_peak_increase = (
+            profile_torch_peak - profile_result.before_profile.torch_peak
+        )
+        profile_result.non_kv_cache_memory = (
+            profile_result.non_torch_increase
+            + profile_result.torch_peak_increase
+            + profile_result.weights_memory
+        )
+        cudagraph_memory_estimate_applied = (
+            cudagraph_memory_estimate
+            if envs.VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS
+            else 0
+        )
+
         self.non_torch_memory = profile_result.non_torch_increase
         self.peak_activation_memory = profile_result.torch_peak_increase
+        self.cudagraph_memory_estimate = cudagraph_memory_estimate
 
         free_gpu_memory = profile_result.after_profile.free_memory
         # NOTE(woosuk): Here we assume that the other processes using the same
@@ -503,7 +537,9 @@ class WorkerFL(WorkerBase):
             "isolate vLLM in its own container."
         )
         self.available_kv_cache_memory_bytes = (
-            self.requested_memory - profile_result.non_kv_cache_memory
+            self.requested_memory
+            - profile_result.non_kv_cache_memory
+            - cudagraph_memory_estimate_applied
         )
 
         unrequested_memory = self.init_snapshot.free_memory - self.requested_memory
@@ -523,6 +559,38 @@ class WorkerFL(WorkerBase):
             "Available KV cache memory: %.2f GiB",
             GiB(self.available_kv_cache_memory_bytes),
         )
+
+        if cudagraph_memory_estimate > 0:
+            total_mem = self.init_snapshot.total_memory
+            current_util = self.cache_config.gpu_memory_utilization
+            cg_util_delta = cudagraph_memory_estimate / total_mem
+            if envs.VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS:
+                equiv_util = round(current_util - cg_util_delta, 4)
+                suggested_util = min(round(current_util + cg_util_delta, 4), 1.0)
+                logger.info(
+                    "CUDA graph memory profiling is enabled. The current "
+                    "--gpu-memory-utilization=%.4f is equivalent to "
+                    "--gpu-memory-utilization=%.4f without CUDA graph memory "
+                    "profiling. To maintain the same effective KV cache size, "
+                    "increase --gpu-memory-utilization to %.4f. To disable, "
+                    "set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0.",
+                    current_util,
+                    equiv_util,
+                    suggested_util,
+                )
+            else:
+                suggested_util = min(round(current_util + cg_util_delta, 4), 1.0)
+                logger.warning(
+                    "CUDA graph memory profiling is disabled "
+                    "(VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0). Without it, "
+                    "CUDA graph memory is not accounted for during KV cache "
+                    "allocation, which may require lowering "
+                    "--gpu-memory-utilization to avoid OOM. Consider "
+                    "re-enabling it and increasing --gpu-memory-utilization "
+                    "from %.4f to %.4f.",
+                    current_util,
+                    suggested_util,
+                )
         gc.collect()
 
         return int(self.available_kv_cache_memory_bytes)
@@ -608,6 +676,21 @@ class WorkerFL(WorkerBase):
         cuda_graph_memory_bytes = 0
         if self.vllm_config.compilation_config.cudagraph_mode != CUDAGraphMode.NONE:
             cuda_graph_memory_bytes = self.model_runner.capture_model()
+
+        if (
+            hasattr(self, "cudagraph_memory_estimate")
+            and self.cudagraph_memory_estimate > 0
+        ):
+            GiB = lambda b: round(b / GiB_bytes, 2)
+            diff = abs(cuda_graph_memory_bytes - self.cudagraph_memory_estimate)
+            logger.info(
+                "CUDA graph pool memory: %s GiB (actual), %s GiB (estimated), "
+                "difference: %s GiB (%.1f%%).",
+                GiB(cuda_graph_memory_bytes),
+                GiB(self.cudagraph_memory_estimate),
+                GiB(diff),
+                100 * diff / max(cuda_graph_memory_bytes, 1),
+            )
 
         if self.cache_config.kv_cache_memory_bytes is None and hasattr(
             self, "peak_activation_memory"
