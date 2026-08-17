@@ -144,6 +144,10 @@ def register_model():
     register_quant_linear()
     register_router()
 
+    from vllm_fl.patches.gdn_packed_decode import patch_vllm_packed_gdn_beta
+
+    patch_vllm_packed_gdn_beta()
+
     # Register GLM-5 (GlmMoeDsa) — config not yet upstream
     try:
         from vllm.transformers_utils.config import _CONFIG_REGISTRY
