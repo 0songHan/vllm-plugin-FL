@@ -51,8 +51,6 @@ class Graph:
         graph = torch.ptpu.PTPUGraph
     elif current_platform.device_type == "gcu":
         graph = torch.gcu.GCUGraph
-    elif current_platform.device_type == "mlu":
-        graph = torch.mlu.MLUGraph
     elif current_platform.device_type == "txda":
         graph = None
     else:
