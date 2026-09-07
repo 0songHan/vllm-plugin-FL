@@ -32,7 +32,44 @@ def apply_kunlunxin_patches():
     patch_fused_gdn_gating()
     patch_op_cls()
     patch_ssm_cache_update()
+    patch_sampler_rng()
     logger.info("Applied all Kunlunxin patches")
+
+
+# ── sampler RNG (TP-consistent unseeded sampling) ──
+def patch_sampler_rng():
+    try:
+        import torch
+        import vllm.v1.sample.ops.topk_topp_sampler as _sampler_mod
+
+        def _tp_consistent_random_sample(probs, generators):
+            q = torch.empty_like(probs)
+            if len(generators) != probs.shape[0]:
+                q.uniform_()
+                q = -torch.log(1-q)
+                q = q.clamp(min=1e-12)
+            if generators:
+                # TODO(woosuk): This can be slow because we handle each request
+                # one by one. Optimize this.
+                if os.getenv("FAST_RANDOM_SAMPLE") == "1":
+                    for i, generator in generators.items():
+                        q[i].uniform_(generator=generator)
+                    q = -torch.log(1-q)
+                    q = q.clamp(min=1e-12)
+                else:
+                    for i, generator in generators.items():
+                        q[i].uniform_(generator=generator)
+                        q[i] = -torch.log(1-q[i])
+                        q[i] = q[i].clamp(min=1e-12)
+
+            return probs.div_(q).argmax(dim=-1).view(-1)
+
+        _sampler_mod.random_sample = _tp_consistent_random_sample
+        logger.info(
+            "Patched sampler random_sample for TP-consistent sampling on Kunlunxin"
+        )
+    except Exception as e:
+        logger.warning("Failed to patch sampler RNG: %s", e)
 
 
 # ── causal_conv1d ──
