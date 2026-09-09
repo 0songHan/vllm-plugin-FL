@@ -356,6 +356,33 @@ def patch_decode_attention():
         import vllm_fl.dispatch.backends.vendor.kunlunxin.impl.attention as attn_mod
         import xtorch_ops
 
+        # Keep the original implementation for CUDA graph replay. The
+        # workaround below allocates host-side LOD tensors from the current
+        # sequence lengths. Those allocations happen during graph capture,
+        # not during replay, so replay would otherwise keep using stale KV
+        # lengths as the decode sequence grows.
+        original_forward_decode = attn_mod.KunlunxinPagedAttention.forward_decode
+
+        def use_native_decode_for_cudagraph() -> bool:
+            try:
+                from vllm.config import CUDAGraphMode
+                from vllm.forward_context import (
+                    get_forward_context,
+                    is_forward_context_available,
+                )
+
+                if not is_forward_context_available():
+                    return False
+
+                return (
+                    get_forward_context().cudagraph_runtime_mode
+                    == CUDAGraphMode.FULL
+                )
+            except Exception:
+                # Keep the patch usable across vLLM minor versions that do
+                # not expose the runtime-mode field.
+                return False
+
         @staticmethod
         def patched_forward_decode(
             query, key_cache, value_cache, block_tables,
@@ -365,6 +392,27 @@ def patch_decode_attention():
         ):
             """Use prefill_attention in prefix_cache mode for decode."""
             import torch
+
+            if use_native_decode_for_cudagraph():
+                return original_forward_decode(
+                    query,
+                    key_cache,
+                    value_cache,
+                    block_tables,
+                    seq_lens,
+                    seq_lens_host,
+                    max_seq_len,
+                    num_decode_tokens,
+                    kv_cache_dtype,
+                    num_kv_heads,
+                    scale,
+                    alibi_slopes,
+                    k_scale,
+                    v_scale,
+                    max_window_size=max_window_size,
+                    output=output,
+                )
+
             if output is None:
                 output = torch.empty_like(query)
 
