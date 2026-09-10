@@ -356,13 +356,7 @@ def patch_decode_attention():
         import vllm_fl.dispatch.backends.vendor.kunlunxin.impl.attention as attn_mod
         import xtorch_ops
 
-        # Keep the original implementation for CUDA graph replay. The
-        # workaround below allocates host-side LOD tensors from the current
-        # sequence lengths. Those allocations happen during graph capture,
-        # not during replay, so replay would otherwise keep using stale KV
-        # lengths as the decode sequence grows.
         original_forward_decode = attn_mod.KunlunxinPagedAttention.forward_decode
-
         def use_native_decode_for_cudagraph() -> bool:
             try:
                 from vllm.config import CUDAGraphMode
@@ -370,10 +364,8 @@ def patch_decode_attention():
                     get_forward_context,
                     is_forward_context_available,
                 )
-
                 if not is_forward_context_available():
                     return False
-
                 return (
                     get_forward_context().cudagraph_runtime_mode
                     == CUDAGraphMode.FULL
